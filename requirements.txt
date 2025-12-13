@@ -4,6 +4,9 @@ mcp>=1.0.0
 # Volatility 3 will be imported from your existing installation
 # We'll add the path dynamically
 
+# Volatility 3 dependencies (required for specific plugins)
+pefile>=2023.2.7  # Required for windows.netscan and other PE analysis plugins
+
 # Database
 aiosqlite>=0.19.0
 

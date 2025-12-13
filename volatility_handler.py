@@ -54,6 +54,8 @@ class VolatilityHandler:
     async def run_plugin(self, plugin_class, **kwargs) -> List[Dict[str, Any]]:
         """Run a Volatility plugin and return results as list of dicts"""
         import time
+        from volatility3.framework import renderers
+
         start_time = time.time()
         plugin_name = f"{plugin_class.__module__}.{plugin_class.__name__}"
         success = True
@@ -82,8 +84,12 @@ class VolatilityHandler:
                 row_dict = {}
                 for column_index, column in enumerate(treegrid.columns):
                     value = node.values[column_index]
+
+                    # Handle UnreadableValue objects from Volatility
+                    if isinstance(value, renderers.UnreadableValue):
+                        row_dict[column.name] = None
                     # Convert non-primitive types to strings
-                    if hasattr(value, '__iter__') and not isinstance(value, (str, bytes)):
+                    elif hasattr(value, '__iter__') and not isinstance(value, (str, bytes)):
                         row_dict[column.name] = str(value)
                     else:
                         row_dict[column.name] = value
@@ -147,7 +153,7 @@ class VolatilityHandler:
 
             return processes
         except Exception as e:
-            logger.error(f"Error in list_processes: {e}")
+            logger.error(f"Error in list_processes: {e}", exc_info=True)
             return []
 
     async def get_process_tree(self) -> List[Dict[str, Any]]:
@@ -168,13 +174,19 @@ class VolatilityHandler:
 
             return processes
         except Exception as e:
-            logger.error(f"Error in get_process_tree: {e}")
+            logger.error(f"Error in get_process_tree: {e}", exc_info=True)
             return []
 
     async def get_network_connections(self) -> List[Dict[str, Any]]:
         """Run windows.netscan plugin"""
         try:
             from volatility3.plugins.windows import netscan
+        except ImportError as e:
+            logger.critical(f"CRITICAL: Missing dependency for network analysis: {e}")
+            logger.critical("Install missing dependencies: pip install pefile")
+            raise ImportError(f"Network analysis unavailable - missing dependency: {e}") from e
+
+        try:
             results = await self.run_plugin(netscan.NetScan)
 
             connections = []
@@ -186,12 +198,12 @@ class VolatilityHandler:
                     'remote_addr': str(conn.get('ForeignAddr', '')),
                     'remote_port': conn.get('ForeignPort'),
                     'state': str(conn.get('State', '')),
-                    'protocol': str(conn.get('Protocol', ''))
+                    'protocol': str(conn.get('Proto', ''))  # Fixed: 'Proto' not 'Protocol'
                 })
 
             return connections
         except Exception as e:
-            logger.error(f"Error in get_network_connections: {e}")
+            logger.error(f"Error in get_network_connections: {e}", exc_info=True)
             return []
 
     async def detect_malfind(self) -> List[Dict[str, Any]]:
@@ -215,7 +227,7 @@ class VolatilityHandler:
 
             return regions
         except Exception as e:
-            logger.error(f"Error in detect_malfind: {e}")
+            logger.error(f"Error in detect_malfind: {e}", exc_info=True)
             return []
 
     async def get_cmdline(self, pid: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -236,7 +248,7 @@ class VolatilityHandler:
 
             return cmdlines
         except Exception as e:
-            logger.error(f"Error in get_cmdline: {e}")
+            logger.error(f"Error in get_cmdline: {e}", exc_info=True)
             return []
 
     async def get_dlls(self, pid: int) -> List[Dict[str, Any]]:
@@ -258,7 +270,7 @@ class VolatilityHandler:
 
             return dlls
         except Exception as e:
-            logger.error(f"Error in get_dlls: {e}")
+            logger.error(f"Error in get_dlls: {e}", exc_info=True)
             return []
 
     async def detect_hidden_processes(self) -> List[int]:
@@ -280,5 +292,5 @@ class VolatilityHandler:
             return list(hidden_pids)
 
         except Exception as e:
-            logger.error(f"Error detecting hidden processes: {e}")
+            logger.error(f"Error detecting hidden processes: {e}", exc_info=True)
             return []

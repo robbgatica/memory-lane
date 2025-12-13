@@ -16,12 +16,18 @@ DUMPS_DIR = Path(os.path.expanduser("~/tools/memdumps"))
 # Export directories
 EXPORT_DIR = DATA_DIR / "exports"
 EXTRACTED_FILES_DIR = DATA_DIR / "extracted"
+EXTRACTION_DIR = DATA_DIR / "extractions"  # For extracted memory dumps
 TEMPLATES_DIR = PROJECT_ROOT / "templates"
 
 # Ensure directories exist
 DATA_DIR.mkdir(exist_ok=True)
 EXPORT_DIR.mkdir(exist_ok=True)
 EXTRACTED_FILES_DIR.mkdir(exist_ok=True)
+EXTRACTION_DIR.mkdir(exist_ok=True)
+
+# Cleanup settings
+EXTRACTION_RETENTION_HOURS = 24  # Keep extractions for 24 hours
+AUTO_CLEANUP_ON_STARTUP = True  # Clean old extractions at startup
 
 # Volatility 3 configuration
 VOLATILITY_PLUGINS_PATH = VOLATILITY_PATH / "volatility3" / "framework" / "plugins"

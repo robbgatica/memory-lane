@@ -38,8 +38,11 @@ env/
 # Memory Forensics Runtime Data
 data/artifacts.db
 data/artifacts.db-journal
+data/forensics.db
+data/forensics.db-journal
 data/exports/*
 data/extracted/*
+data/extractions/*
 !data/exports/.gitkeep
 !data/extracted/.gitkeep
 

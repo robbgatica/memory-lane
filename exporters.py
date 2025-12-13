@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 from database import ForensicsDatabase
+from validation import DataValidator
 
 
 class DataExporter:
@@ -194,6 +195,10 @@ class DataExporter:
         # Get statistics
         stats = await self.db.get_command_stats(dump_id)
 
+        # Validate data integrity
+        validator = DataValidator(self.db)
+        validation_result = await validator.validate_dump_integrity(dump_id)
+
         return {
             'dump_id': dump_id,
             'dump': dump,
@@ -207,7 +212,8 @@ class DataExporter:
             'memory_regions': regions,
             'region_count': len(regions),
             'commands': command_lines,
-            'command_stats': stats
+            'command_stats': stats,
+            'validation': validation_result
         }
 
     async def _export_basic_html(self, dump_id: str, output_path: Path,
@@ -279,7 +285,31 @@ class DataExporter:
         html += """
         </div>
     </div>
+"""
 
+        # Add data quality warnings if present
+        validation = data.get('validation', {})
+        if not validation.get('valid', True) or validation.get('warnings'):
+            html += """
+    <div class="section" style="background: #fff3cd; border-left: 4px solid #ffc107;">
+        <h2>Data Quality Warnings</h2>
+"""
+            if validation.get('issues'):
+                html += "        <h3>Critical Issues:</h3>\n        <ul>\n"
+                for issue in validation['issues']:
+                    html += f"            <li><strong>ERROR:</strong> {issue}</li>\n"
+                html += "        </ul>\n"
+
+            if validation.get('warnings'):
+                html += "        <h3>Warnings:</h3>\n        <ul>\n"
+                for warning in validation['warnings']:
+                    html += f"            <li><strong>WARNING:</strong> {warning}</li>\n"
+                html += "        </ul>\n"
+
+            html += """    </div>
+"""
+
+        html += """
     <div class="section">
         <h2>Command Provenance</h2>
 """

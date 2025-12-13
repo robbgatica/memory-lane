@@ -13,6 +13,7 @@ from typing import Any, Optional
 import zipfile
 import tempfile
 import shutil
+from datetime import datetime
 
 from mcp.server.models import InitializationOptions
 from mcp.server import NotificationOptions, Server
@@ -34,9 +35,15 @@ from exporters import DataExporter
 from timeline import TimelineGenerator
 from anomaly_detector import AnomalyDetector
 from extractors import create_extractor
+from validation import DataValidator
+from cleanup import (
+    ManagedExtraction, cleanup_old_extractions, cleanup_all_extractions,
+    get_disk_usage, list_extractions
+)
 from config import (
-    DB_PATH, DUMPS_DIR, EXPORT_DIR, EXTRACTED_FILES_DIR,
-    LLM_PROFILE, CURRENT_PROFILE_SETTINGS
+    DB_PATH, DUMPS_DIR, EXPORT_DIR, EXTRACTED_FILES_DIR, EXTRACTION_DIR,
+    LLM_PROFILE, CURRENT_PROFILE_SETTINGS,
+    EXTRACTION_RETENTION_HOURS, AUTO_CLEANUP_ON_STARTUP, DATA_DIR
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -63,7 +70,13 @@ def extract_dump_if_needed(dump_path: Path) -> Path:
     """Extract memory dump from zip if necessary"""
     if dump_path.suffix.lower() == '.zip':
         logger.info(f"Extracting {dump_path.name}...")
-        temp_dir = Path(tempfile.mkdtemp(prefix="memdump_"))
+
+        # Use persistent extraction directory instead of tmpfs
+        import time
+        dump_id = get_dump_id(str(dump_path))
+        timestamp = int(time.time())
+        temp_dir = EXTRACTION_DIR / f"memdump_{dump_id}_{timestamp}"
+        temp_dir.mkdir(parents=True, exist_ok=True)
 
         with zipfile.ZipFile(dump_path, 'r') as zip_ref:
             # Extract all files
@@ -73,11 +86,13 @@ def extract_dump_if_needed(dump_path: Path) -> Path:
         for ext in ['.raw', '.mem', '.dmp', '.vmem', '.bin']:
             extracted_files = list(temp_dir.rglob(f'*{ext}'))
             if extracted_files:
+                logger.info(f"Extracted to: {extracted_files[0]}")
                 return extracted_files[0]
 
         # If no specific extension, return first file
         files = list(temp_dir.iterdir())
         if files:
+            logger.info(f"Extracted to: {files[0]}")
             return files[0]
 
         raise ValueError(f"No memory dump found in {dump_path}")
@@ -376,6 +391,20 @@ async def handle_list_tools() -> list[Tool]:
             }
         ),
         Tool(
+            name="health_check",
+            description=adapt_description("Check data integrity and consistency for a processed memory dump"),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "dump_id": {
+                        "type": "string",
+                        "description": "ID of the memory dump to validate"
+                    }
+                },
+                "required": ["dump_id"]
+            }
+        ),
+        Tool(
             name="extract_process",
             description=adapt_description("Extract detailed process information to JSON file"),
             inputSchema={
@@ -391,6 +420,36 @@ async def handle_list_tools() -> list[Tool]:
                     }
                 },
                 "required": ["dump_id", "pid"]
+            }
+        ),
+        Tool(
+            name="cleanup_extractions",
+            description=adapt_description("Clean up old memory dump extractions to free disk space"),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "mode": {
+                        "type": "string",
+                        "description": "Cleanup mode: 'old' (remove extractions older than retention period), 'all' (remove all), 'list' (show extractions)",
+                        "enum": ["old", "all", "list"],
+                        "default": "old"
+                    },
+                    "dry_run": {
+                        "type": "boolean",
+                        "description": "If true, show what would be removed without actually deleting",
+                        "default": False
+                    }
+                },
+                "required": []
+            }
+        ),
+        Tool(
+            name="get_disk_usage",
+            description=adapt_description("Get disk space usage statistics for the MCP server (database, exports, extractions)"),
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": []
             }
         )
     ]
@@ -452,12 +511,16 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
             # Extract network connections
             result += "Extracting network connections...\n"
             connections = await vol.get_network_connections()
+            # Clear old network data before inserting to prevent duplicates on reprocessing
+            await db.clear_network_connections(dump_id)
             await db.add_network_connections(dump_id, connections)
             result += f"[OK] Found {len(connections)} network connections\n\n"
 
             # Detect code injection
             result += "Scanning for code injection...\n"
             suspicious_regions = await vol.detect_malfind()
+            # Clear old memory region data before inserting to prevent duplicates on reprocessing
+            await db.clear_memory_regions(dump_id)
             await db.add_memory_regions(dump_id, suspicious_regions)
             result += f"[OK] Found {len(suspicious_regions)} suspicious memory regions\n\n"
 
@@ -483,7 +546,37 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
             if dump:
                 await db.add_dump(dump_id, dump['file_path'], dump['file_size'], dump.get('os_type'))
 
-            result += "**Processing complete!** You can now use other tools to analyze the extracted data."
+            # Validate data integrity
+            result += "Validating data integrity...\n"
+            validator = DataValidator(db)
+
+            # Compare Volatility results with database
+            db_processes = await db.get_processes(dump_id)
+            db_connections = await db.get_network_connections(dump_id)
+
+            validation_warnings = await validator.compare_volatility_to_database(
+                dump_id,
+                {
+                    'processes': len(processes),
+                    'network_connections': len(connections),
+                    'suspicious_memory_regions': len(suspicious_regions)
+                },
+                {
+                    'processes': len(db_processes),
+                    'network_connections': len(db_connections),
+                    'suspicious_memory_regions': len(suspicious_regions)
+                }
+            )
+
+            if validation_warnings:
+                result += "\n**Data Integrity Warnings:**\n"
+                for warning in validation_warnings:
+                    result += f"- WARNING: {warning}\n"
+                    logger.warning(f"[{dump_id}] {warning}")
+            else:
+                result += "[OK] All data validated successfully\n"
+
+            result += "\n**Processing complete!** You can now use other tools to analyze the extracted data."
 
             return [TextContent(type="text", text=result)]
 
@@ -644,7 +737,7 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
                     by_pid[pid] = []
                 by_pid[pid].append(conn)
 
-            for pid, pid_conns in sorted(by_pid.items()):
+            for pid, pid_conns in sorted(by_pid.items(), key=lambda x: (x[0] is None, x[0] or 0)):
                 if pid:
                     proc = await db.get_process_by_pid(dump_id, pid)
                     proc_name = proc.get('name', 'Unknown') if proc else 'Unknown'
@@ -900,10 +993,71 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
             # Create anomaly detector
             detector = AnomalyDetector(db)
 
+            # Detect anomalies (returns list of anomaly dicts)
+            anomalies = await detector.detect_anomalies(dump_id)
+
+            # Extract PIDs of suspicious processes and persist to database
+            suspicious_pids = set()
+            for anomaly in anomalies:
+                if 'pid' in anomaly:
+                    suspicious_pids.add(anomaly['pid'])
+                # For duplicate instances, add all PIDs
+                if 'pids' in anomaly:
+                    suspicious_pids.update(anomaly['pids'])
+
+            # Mark processes as suspicious in the database
+            if suspicious_pids:
+                await db.mark_processes_suspicious(dump_id, list(suspicious_pids))
+                logger.info(f"Marked {len(suspicious_pids)} processes as suspicious in database")
+
             # Get anomaly report
             report = await detector.get_anomaly_report(dump_id)
 
             return [TextContent(type="text", text=report)]
+
+        elif name == "health_check":
+            dump_id = arguments["dump_id"]
+
+            # Create validator
+            validator = DataValidator(db)
+
+            # Run integrity check
+            validation_result = await validator.validate_dump_integrity(dump_id)
+
+            # Format result
+            result = f"**Data Integrity Check - {dump_id}**\n\n"
+
+            if validation_result['valid']:
+                result += "Status: HEALTHY\n\n"
+            else:
+                result += "Status: ISSUES FOUND\n\n"
+
+            # Show statistics
+            stats = validation_result.get('stats', {})
+            result += "**Statistics:**\n"
+            result += f"- Total Commands: {stats.get('total_commands', 0)}\n"
+            result += f"- Failed Commands: {stats.get('failed_commands', 0)}\n"
+            result += f"- Process Count: {stats.get('process_count', 0)}\n"
+            result += f"- Network Connection Count: {stats.get('network_count', 0)}\n\n"
+
+            # Show issues
+            if validation_result.get('issues'):
+                result += "**Critical Issues:**\n"
+                for issue in validation_result['issues']:
+                    result += f"- ERROR: {issue}\n"
+                result += "\n"
+
+            # Show warnings
+            if validation_result.get('warnings'):
+                result += "**Warnings:**\n"
+                for warning in validation_result['warnings']:
+                    result += f"- WARNING: {warning}\n"
+                result += "\n"
+
+            if not validation_result.get('issues') and not validation_result.get('warnings'):
+                result += "No issues or warnings detected. Data appears consistent.\n"
+
+            return [TextContent(type="text", text=result)]
 
         elif name == "extract_process":
             dump_id = arguments["dump_id"]
@@ -938,6 +1092,107 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
                 logger.error(f"Process extraction failed: {e}", exc_info=True)
                 return [TextContent(type="text", text=f"Process extraction failed: {str(e)}")]
 
+        elif name == "cleanup_extractions":
+            mode = arguments.get("mode", "old")
+            dry_run = arguments.get("dry_run", False)
+
+            try:
+                if mode == "list":
+                    # List all extractions
+                    extractions = list_extractions(EXTRACTION_DIR)
+
+                    if not extractions:
+                        return [TextContent(type="text", text="No extractions found.")]
+
+                    result = f"**Current Extractions**\n\n"
+                    result += f"Found {len(extractions)} extraction(s):\n\n"
+
+                    for extraction in extractions:
+                        result += f"**{extraction['name']}**\n"
+                        result += f"- Size: {extraction['size_gb']:.2f} GB\n"
+                        result += f"- Created: {extraction['created']}\n"
+                        result += f"- Age: {extraction['age_hours']:.1f} hours\n\n"
+
+                    return [TextContent(type="text", text=result)]
+
+                elif mode == "all":
+                    # Remove all extractions
+                    stats = cleanup_all_extractions(EXTRACTION_DIR)
+
+                    result = f"**Cleanup Complete**\n\n"
+                    result += f"Removed: {stats['removed_count']} extraction(s)\n"
+                    result += f"Freed: {stats['freed_gb']:.2f} GB\n"
+
+                    if stats.get('errors'):
+                        result += f"\n**Errors:**\n"
+                        for error in stats['errors']:
+                            result += f"- {error}\n"
+
+                    return [TextContent(type="text", text=result)]
+
+                else:  # mode == "old"
+                    # Remove old extractions
+                    stats = cleanup_old_extractions(
+                        EXTRACTION_DIR,
+                        retention_hours=EXTRACTION_RETENTION_HOURS,
+                        dry_run=dry_run
+                    )
+
+                    if dry_run:
+                        result = f"**Cleanup Preview (Dry Run)**\n\n"
+                    else:
+                        result = f"**Cleanup Complete**\n\n"
+
+                    result += f"Retention period: {EXTRACTION_RETENTION_HOURS} hours\n"
+                    result += f"Removed: {stats['removed_count']} extraction(s)\n"
+                    result += f"Freed: {stats['freed_gb']:.2f} GB\n"
+
+                    if dry_run and stats['removed_count'] > 0:
+                        result += f"\nRun with dry_run=false to actually remove these files.\n"
+
+                    if stats.get('errors'):
+                        result += f"\n**Errors:**\n"
+                        for error in stats['errors']:
+                            result += f"- {error}\n"
+
+                    return [TextContent(type="text", text=result)]
+
+            except Exception as e:
+                logger.error(f"Cleanup failed: {e}", exc_info=True)
+                return [TextContent(type="text", text=f"Cleanup failed: {str(e)}")]
+
+        elif name == "get_disk_usage":
+            try:
+                stats = get_disk_usage(DATA_DIR, EXTRACTION_DIR)
+
+                result = f"**Disk Usage Statistics**\n\n"
+                result += f"**Database:**\n"
+                result += f"- Size: {stats['database_size_mb']:.2f} MB\n"
+                result += f"- Location: {stats['data_dir']}/artifacts.db\n\n"
+
+                result += f"**Exports:**\n"
+                result += f"- Size: {stats['exports_size_mb']:.2f} MB\n"
+                result += f"- Location: {stats['data_dir']}/exports\n\n"
+
+                result += f"**Extractions:**\n"
+                result += f"- Size: {stats['extractions_size_gb']:.2f} GB\n"
+                result += f"- Count: {stats['extractions_count']}\n"
+                result += f"- Location: {stats['extraction_dir']}\n\n"
+
+                result += f"**Total:**\n"
+                result += f"- Size: {stats['total_size_gb']:.2f} GB\n"
+
+                # Add recommendation if extractions are large
+                if stats['extractions_size_gb'] > 5.0:
+                    result += f"\n**Recommendation:** Extractions are using {stats['extractions_size_gb']:.2f} GB. "
+                    result += f"Consider running cleanup_extractions to free space.\n"
+
+                return [TextContent(type="text", text=result)]
+
+            except Exception as e:
+                logger.error(f"Failed to get disk usage: {e}", exc_info=True)
+                return [TextContent(type="text", text=f"Failed to get disk usage: {str(e)}")]
+
         else:
             return [TextContent(type="text", text=f"Unknown tool: {name}")]
 
@@ -953,6 +1208,22 @@ async def main():
     logger.info("Memory Forensics MCP Server starting...")
     logger.info(f"Database: {DB_PATH}")
     logger.info(f"Dumps directory: {DUMPS_DIR}")
+
+    # Clean up old extractions on startup
+    if AUTO_CLEANUP_ON_STARTUP:
+        try:
+            stats = cleanup_old_extractions(
+                EXTRACTION_DIR,
+                retention_hours=EXTRACTION_RETENTION_HOURS,
+                dry_run=False
+            )
+            if stats['removed_count'] > 0:
+                logger.info(
+                    f"Startup cleanup: Removed {stats['removed_count']} old extraction(s), "
+                    f"freed {stats['freed_gb']:.2f} GB"
+                )
+        except Exception as e:
+            logger.warning(f"Startup cleanup failed: {e}")
 
     # Run the server
     async with stdio_server() as (read_stream, write_stream):

@@ -73,7 +73,8 @@ class ForensicsDatabase:
                     remote_port INTEGER,
                     state TEXT,
                     protocol TEXT,
-                    FOREIGN KEY (dump_id) REFERENCES dumps(dump_id)
+                    FOREIGN KEY (dump_id) REFERENCES dumps(dump_id),
+                    UNIQUE(dump_id, pid, local_addr, local_port, remote_addr, remote_port, protocol)
                 )
             """)
 
@@ -220,12 +221,21 @@ class ForensicsDatabase:
                 row = await cursor.fetchone()
                 return dict(row) if row else None
 
+    async def clear_network_connections(self, dump_id: str):
+        """Clear network connections for a dump before reprocessing"""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "DELETE FROM network_connections WHERE dump_id = ?",
+                (dump_id,)
+            )
+            await db.commit()
+
     async def add_network_connections(self, dump_id: str, connections: List[Dict[str, Any]]):
         """Bulk insert network connections"""
         async with aiosqlite.connect(self.db_path) as db:
             for conn in connections:
                 await db.execute("""
-                    INSERT INTO network_connections
+                    INSERT OR IGNORE INTO network_connections
                     (dump_id, pid, local_addr, local_port, remote_addr, remote_port, state, protocol)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
@@ -254,6 +264,15 @@ class ForensicsDatabase:
             async with db.execute(query, params) as cursor:
                 rows = await cursor.fetchall()
                 return [dict(row) for row in rows]
+
+    async def clear_memory_regions(self, dump_id: str):
+        """Clear memory regions for a dump before reprocessing"""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "DELETE FROM memory_regions WHERE dump_id = ?",
+                (dump_id,)
+            )
+            await db.commit()
 
     async def add_memory_regions(self, dump_id: str, regions: List[Dict[str, Any]]):
         """Bulk insert memory regions"""
@@ -376,3 +395,24 @@ class ForensicsDatabase:
             """, (dump_id,)) as cursor:
                 rows = await cursor.fetchall()
                 return [dict(row) for row in rows]
+
+    async def mark_process_suspicious(self, dump_id: str, pid: int, is_suspicious: bool = True):
+        """Mark a specific process as suspicious or not"""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("""
+                UPDATE processes
+                SET is_suspicious = ?
+                WHERE dump_id = ? AND pid = ?
+            """, (is_suspicious, dump_id, pid))
+            await db.commit()
+
+    async def mark_processes_suspicious(self, dump_id: str, pids: List[int]):
+        """Bulk mark multiple processes as suspicious"""
+        async with aiosqlite.connect(self.db_path) as db:
+            for pid in pids:
+                await db.execute("""
+                    UPDATE processes
+                    SET is_suspicious = 1
+                    WHERE dump_id = ? AND pid = ?
+                """, (dump_id, pid))
+            await db.commit()
