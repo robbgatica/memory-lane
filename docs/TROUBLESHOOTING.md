@@ -101,10 +101,10 @@ detect_anomalies for <dump_id>
 **Diagnosis:**
 ```bash
 # Check dumps directory
-ls -lh ~/tools/memdumps/
+ls -lh <dumps-dir>/
 
 # Check if dump is registered
-sqlite3 ~/tools/memory-forensics-mcp/data/artifacts.db "SELECT dump_id, file_path FROM dumps;"
+sqlite3 <project-dir>/data/artifacts.db "SELECT dump_id, file_path FROM dumps;"
 ```
 
 **Causes & Fixes:**
@@ -112,7 +112,7 @@ sqlite3 ~/tools/memory-forensics-mcp/data/artifacts.db "SELECT dump_id, file_pat
 **A. Dump not in expected directory:**
 ```bash
 # Move dump to correct location
-mv /path/to/dump.zip ~/tools/memdumps/
+mv /path/to/dump.zip <dumps-dir>/
 ```
 
 **B. Dump ID doesn't match filename:**
@@ -125,7 +125,7 @@ Dump ID: mini_memory_ctf
 **C. Permissions issue:**
 ```bash
 # Fix permissions
-chmod 644 ~/tools/memdumps/*.zip
+chmod 644 <dumps-dir>/*.zip
 ```
 
 ---
@@ -139,7 +139,7 @@ chmod 644 ~/tools/memdumps/*.zip
 **Diagnosis:**
 Check command history for errors:
 ```bash
-sqlite3 ~/tools/memory-forensics-mcp/data/artifacts.db \
+sqlite3 <project-dir>/data/artifacts.db \
   "SELECT plugin_name, success, error_message FROM command_log WHERE success = 0;"
 ```
 
@@ -148,7 +148,7 @@ sqlite3 ~/tools/memory-forensics-mcp/data/artifacts.db \
 **A. Symbol files missing:**
 ```bash
 # Download Windows symbols
-cd ~/tools/volatility3
+cd <volatility3-dir>
 python3 vol.py -f /path/to/dump.mem windows.info
 # This will download required symbols
 ```
@@ -158,7 +158,7 @@ Some dumps require specific Volatility versions or ISF files.
 
 ```bash
 # Check dump compatibility
-cd ~/tools/volatility3
+cd <volatility3-dir>
 python3 vol.py -f /path/to/dump.mem windows.info
 ```
 
@@ -193,7 +193,7 @@ pkill -f "memory-forensics"
 The server uses connection pooling, but if you're accessing the database externally:
 ```bash
 # Use WAL mode for better concurrency
-sqlite3 ~/tools/memory-forensics-mcp/data/artifacts.db "PRAGMA journal_mode=WAL;"
+sqlite3 <project-dir>/data/artifacts.db "PRAGMA journal_mode=WAL;"
 ```
 
 ---
@@ -234,7 +234,7 @@ The server should clean up temp files automatically, but crashes can leave them 
 
 **Fix:**
 ```bash
-cd ~/tools/memory-forensics-mcp
+cd <project-dir>
 source venv/bin/activate
 pip install -r requirements.txt
 ```
@@ -255,7 +255,7 @@ pip install -r requirements.txt
 **Diagnosis:**
 Check if data exists in database:
 ```bash
-sqlite3 ~/tools/memory-forensics-mcp/data/artifacts.db <<EOF
+sqlite3 <project-dir>/data/artifacts.db <<EOF
 SELECT
   (SELECT COUNT(*) FROM processes WHERE dump_id='mini_memory_ctf') as processes,
   (SELECT COUNT(*) FROM network_connections WHERE dump_id='mini_memory_ctf') as network,
@@ -287,16 +287,16 @@ Restart Claude Code to apply changes.
 
 Test Volatility directly:
 ```bash
-cd ~/tools/volatility3
-python3 vol.py -f ~/tools/memdumps/dump.zip windows.pslist
-python3 vol.py -f ~/tools/memdumps/dump.zip windows.netscan
+cd <volatility3-dir>
+python3 vol.py -f <dumps-dir>/dump.zip windows.pslist
+python3 vol.py -f <dumps-dir>/dump.zip windows.netscan
 ```
 
 ### Inspect Database
 
 ```bash
 # Open database
-sqlite3 ~/tools/memory-forensics-mcp/data/artifacts.db
+sqlite3 <project-dir>/data/artifacts.db
 
 # List tables
 .tables
@@ -352,11 +352,11 @@ This checks:
 Compare Volatility output with database:
 ```bash
 # Count processes from Volatility
-cd ~/tools/volatility3
-python3 vol.py -f ~/tools/memdumps/dump.zip windows.pslist | wc -l
+cd <volatility3-dir>
+python3 vol.py -f <dumps-dir>/dump.zip windows.pslist | wc -l
 
 # Count processes in database
-sqlite3 ~/tools/memory-forensics-mcp/data/artifacts.db \
+sqlite3 <project-dir>/data/artifacts.db \
   "SELECT COUNT(*) FROM processes WHERE dump_id='<dump_id>';"
 ```
 
@@ -407,7 +407,7 @@ When reporting issues, include:
 
 2. **MCP Server version:**
    ```bash
-   cd ~/tools/memory-forensics-mcp
+   cd <project-dir>
    git log -1 --oneline
    ```
 
@@ -416,7 +416,7 @@ When reporting issues, include:
 
 4. **Database state:**
    ```bash
-   sqlite3 ~/tools/memory-forensics-mcp/data/artifacts.db \
+   sqlite3 <project-dir>/data/artifacts.db \
      "SELECT dump_id, status FROM dumps;"
    ```
 

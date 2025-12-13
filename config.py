@@ -17,20 +17,28 @@ try:
 except ImportError:
     VOLATILITY_INSTALLED_VIA_PIP = False
     # Fallback to custom path for advanced users
-    VOLATILITY_PATH = Path(os.path.expanduser(
-        os.getenv("VOLATILITY_PATH", "~/tools/volatility3")
-    ))
-
-    # Add to path if using custom installation
-    if VOLATILITY_PATH.exists():
-        sys.path.insert(0, str(VOLATILITY_PATH))
+    # Check VOLATILITY_PATH environment variable first, otherwise use None
+    env_vol_path = os.getenv("VOLATILITY_PATH")
+    if env_vol_path:
+        VOLATILITY_PATH = Path(os.path.expanduser(env_vol_path))
+        # Add to path if using custom installation
+        if VOLATILITY_PATH.exists():
+            sys.path.insert(0, str(VOLATILITY_PATH))
+        else:
+            print(f"WARNING: VOLATILITY_PATH is set to {VOLATILITY_PATH} but path does not exist")
+            VOLATILITY_PATH = None
     else:
-        print(f"WARNING: Volatility 3 not found via pip or at {VOLATILITY_PATH}")
+        VOLATILITY_PATH = None
+        print("WARNING: Volatility 3 not found via pip and VOLATILITY_PATH not set")
         print("Install with: pip install -r requirements.txt")
         print("Or set VOLATILITY_PATH environment variable to point to your custom volatility3 installation")
 
 # Memory dumps location
-DUMPS_DIR = Path(os.path.expanduser("~/tools/memdumps"))
+# Default to a 'dumps' directory within the project for ease of setup
+# Override via DUMPS_DIR environment variable or edit this file
+DUMPS_DIR = Path(os.path.expanduser(
+    os.getenv("DUMPS_DIR", str(PROJECT_ROOT / "dumps"))
+))
 
 # Export directories
 EXPORT_DIR = DATA_DIR / "exports"
@@ -40,6 +48,7 @@ TEMPLATES_DIR = PROJECT_ROOT / "templates"
 
 # Ensure directories exist
 DATA_DIR.mkdir(exist_ok=True)
+DUMPS_DIR.mkdir(exist_ok=True)
 EXPORT_DIR.mkdir(exist_ok=True)
 EXTRACTED_FILES_DIR.mkdir(exist_ok=True)
 EXTRACTION_DIR.mkdir(exist_ok=True)

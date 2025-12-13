@@ -9,27 +9,12 @@ Complete setup guide from zero to your first memory forensics investigation.
 - **Volatility 3**: Memory forensics framework
 - **Memory dumps**: Windows memory dumps (.raw, .mem, .dmp, .vmem, or .zip)
 
-## Step 1: Install Volatility 3
+## Step 1: Set Up Memory Forensics MCP Server
 
 ```bash
-# Clone Volatility 3
-mkdir -p ~/tools
-cd ~/tools
-git clone https://github.com/volatilityfoundation/volatility3.git
-cd volatility3
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Test installation
-python3 vol.py -h
-```
-
-## Step 2: Set Up Memory Forensics MCP Server
-
-```bash
-# Navigate to the MCP server directory
-cd ~/tools/memory-forensics-mcp
+# Clone or download the repository
+git clone <repository-url> memory-forensics-mcp
+cd memory-forensics-mcp
 
 # Create virtual environment
 python3 -m venv venv
@@ -37,27 +22,26 @@ python3 -m venv venv
 # Activate virtual environment
 source venv/bin/activate
 
-# Install dependencies
+# Install all dependencies (including Volatility 3)
 pip install -r requirements.txt
-
-# Install Volatility 3 in the virtual environment
-cd ~/tools/volatility3
-pip install -e .
 ```
 
-## Step 3: Prepare Memory Dumps
+## Step 2: Prepare Memory Dumps
 
 ```bash
-# Create dumps directory
-mkdir -p ~/tools/memdumps
-
-# Place your memory dumps here
+# Memory dumps will go in the 'dumps' directory (auto-created in project)
 # Supported formats: .zip, .raw, .mem, .dmp, .vmem
-# Example:
-# cp /path/to/your/dump.zip ~/tools/memdumps/
+
+# Copy your dumps to the dumps directory
+cp /path/to/your/dump.zip dumps/
+
+# Or configure a custom location by editing config.py:
+# DUMPS_DIR = Path("/path/to/your/dumps")
+# Or via environment variable:
+# export DUMPS_DIR=/path/to/your/dumps
 ```
 
-## Step 4: Configure Claude Code
+## Step 3: Configure Claude Code
 
 Add the MCP server to your Claude Code configuration:
 
@@ -66,14 +50,26 @@ Add the MCP server to your Claude Code configuration:
 nano ~/.claude/mcp.json
 ```
 
-Add this content (create the file if it doesn't exist):
+Add this content (replace paths with your actual installation location):
 
 ```json
 {
   "mcpServers": {
     "memory-forensics": {
-      "command": "/home/robb/tools/memory-forensics-mcp/venv/bin/python",
-      "args": ["/home/robb/tools/memory-forensics-mcp/server.py"]
+      "command": "/absolute/path/to/memory-forensics-mcp/venv/bin/python",
+      "args": ["/absolute/path/to/memory-forensics-mcp/server.py"]
+    }
+  }
+}
+```
+
+Example:
+```json
+{
+  "mcpServers": {
+    "memory-forensics": {
+      "command": "/home/username/projects/memory-forensics-mcp/venv/bin/python",
+      "args": ["/home/username/projects/memory-forensics-mcp/server.py"]
     }
   }
 }
@@ -81,11 +77,11 @@ Add this content (create the file if it doesn't exist):
 
 **Important**: Replace `/home/robb` with your actual home directory path if different.
 
-## Step 5: Test the Installation
+## Step 4: Test the Installation
 
 ```bash
 # Test that dependencies are installed correctly
-cd ~/tools/memory-forensics-mcp
+cd memory-forensics-mcp
 source venv/bin/activate
 python -c "import mcp, aiosqlite, volatility3; print('[OK] All dependencies installed')"
 ```
@@ -96,14 +92,14 @@ python -c "import mcp, aiosqlite, volatility3; print('[OK] All dependencies inst
 
 **Note**: You don't need to run `python server.py` manually. Claude Code will start the MCP server automatically when you launch a session. The server communicates via stdio (stdin/stdout) and won't display any output when run directly.
 
-## Step 6: Start Claude Code
+## Step 5: Start Claude Code
 
 ```bash
 # Start a fresh Claude Code session
 claude
 ```
 
-## Step 7: Verify It Works
+## Step 6: Verify It Works
 
 In the Claude Code session, ask:
 
@@ -125,7 +121,7 @@ You should see Claude list tools like:
 2. Virtual environment path is correct
 3. Restart Claude Code
 
-## Step 8: Your First Investigation
+## Step 7: Your First Investigation
 
 List available memory dumps:
 ```
@@ -139,7 +135,7 @@ Process a dump (start with the smallest one):
 
 **Note**: First-time processing takes 5-15 minutes depending on dump size. Results are cached for instant subsequent queries.
 
-## Step 9: Start Investigating!
+## Step 8: Start Investigating!
 
 Try investigative questions:
 - "Are there any suspicious processes?"
@@ -152,11 +148,11 @@ Try investigative questions:
 ## Architecture Overview
 
 ```
-Your Memory Dumps (~/tools/memdumps/)
+Your Memory Dumps (project/dumps/ or custom location)
        ↓
 Volatility 3 (extracts artifacts)
        ↓
-SQLite Cache (~/tools/memory-forensics-mcp/data/artifacts.db)
+SQLite Cache (project/data/artifacts.db)
        ↓
 MCP Server (exposes tools)
        ↓
@@ -165,10 +161,10 @@ Claude Code (AI-powered analysis)
 
 ## File Locations
 
-- **MCP Server**: `~/tools/memory-forensics-mcp/`
-- **Volatility 3**: `~/tools/volatility3/`
-- **Your Dumps**: `~/tools/memdumps/`
-- **Cached Data**: `~/tools/memory-forensics-mcp/data/artifacts.db`
+- **MCP Server**: `<install-dir>/memory-forensics-mcp/`
+- **Volatility 3**: Installed via pip in venv
+- **Your Dumps**: `<install-dir>/memory-forensics-mcp/dumps/` (default)
+- **Cached Data**: `<install-dir>/memory-forensics-mcp/data/artifacts.db`
 - **MCP Config**: `~/.claude/mcp.json`
 
 ## Troubleshooting
@@ -182,14 +178,15 @@ Claude Code (AI-powered analysis)
 
 2. Test dependencies are installed:
    ```bash
-   cd ~/tools/memory-forensics-mcp
+   cd memory-forensics-mcp
    source venv/bin/activate
    python -c "import mcp, aiosqlite, volatility3; print('All imports OK')"
    ```
 
 3. Check paths in `config.py` match your setup:
    ```bash
-   cat ~/tools/memory-forensics-mcp/config.py
+   cat config.py
+   # Verify DUMPS_DIR is set correctly
    ```
 
 4. Verify the virtual environment Python path is correct in `~/.claude/mcp.json`
@@ -199,16 +196,15 @@ Claude Code (AI-powered analysis)
 ### "Volatility import error"
 
 ```bash
-cd ~/tools/volatility3
+source venv/bin/activate
 pip install -r requirements.txt
-pip install -e .
 ```
 
 ### "No dumps found"
 
-1. Check dumps are in `~/tools/memdumps/`
+1. Check dumps are in the `dumps/` directory (or your configured DUMPS_DIR)
 2. Verify supported format: .zip, .raw, .mem, .dmp, .vmem
-3. Check paths in `~/tools/memory-forensics-mcp/config.py`
+3. Check DUMPS_DIR in `config.py` or set via environment variable
 
 ### Processing is very slow
 
@@ -218,19 +214,19 @@ pip install -e .
 
 ## Next Steps
 
-- **Testing Guide**: See `~/tools/memory-forensics-mcp/TESTING.md`
-- **Technical Details**: See `~/tools/memory-forensics-mcp/README.md`
-- **Project Documentation**: See `~/tools/memory-forensics-mcp/PROJECT_SUMMARY.md`
+- **Technical Details**: See `README.md` in the project directory
+- **Multi-LLM Guide**: See `docs/MULTI_LLM_GUIDE.md` for using Ollama/Llama
+- **Troubleshooting**: See `docs/TROUBLESHOOTING.md`
 
-## Future: Local LLM Integration
+## Local LLM Integration
 
 The MCP server is LLM-agnostic and works with any MCP client:
 
 1. The MCP server code stays the same
-2. Build a custom MCP client for your local LLM (Llama, etc.)
+2. Use the included Ollama client for local LLMs (see docs/MULTI_LLM_GUIDE.md)
 3. Swap between Claude and local LLMs anytime
-4. Air-gapped forensic analysis possible
+4. Suitable for offline/confidential forensic analysis
 
 ---
 
-**Ready to investigate!** 🔍
+**Ready to investigate!**

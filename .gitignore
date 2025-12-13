@@ -46,6 +46,10 @@ data/extractions/*
 !data/exports/.gitkeep
 !data/extracted/.gitkeep
 
+# Memory dumps (user data)
+dumps/*
+!dumps/.gitkeep
+
 # Logs
 *.log
 logs/

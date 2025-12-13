@@ -251,7 +251,7 @@ AI: "Complete analysis exported to Win11Dump_report.html"
 
 ## Data Storage
 
-- **Dumps**: Configured via `DUMPS_DIR` in `config.py` (default: `~/tools/memdumps/`)
+- **Dumps**: Configured via `DUMPS_DIR` in `config.py` (default: `<project-dir>/dumps/`)
 - **Cache**: `<install-dir>/data/artifacts.db` (SQLite database)
 - **Exports**: `<install-dir>/data/exports/` (JSON, CSV, HTML reports)
 - **Extracted Files**: `<install-dir>/data/extracted/` (extracted process data)

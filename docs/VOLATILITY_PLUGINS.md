@@ -220,13 +220,13 @@ This documentation is based on **Volatility 3.2.0+**. Column names may vary in o
 
 **Checking Your Version:**
 ```bash
-cd ~/tools/volatility3
+cd <volatility3-dir>
 python3 vol.py --version
 ```
 
 **Updating Volatility:**
 ```bash
-cd ~/tools/volatility3
+cd <volatility3-dir>
 git pull origin develop
 pip3 install -r requirements.txt
 ```
